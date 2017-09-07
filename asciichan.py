@@ -14,7 +14,9 @@
 
 import webapp2, os, jinja2, re, sys, urllib2
 from xml.dom import minidom
+import logging
 from google.appengine.ext import db
+from google.appengine.api import memcache
 
 template_dir = os.path.join(os.path.dirname(__file__), 'template')
 jinja_env = jinja2.Environment(loader = jinja2.FileSystemLoader(template_dir), 
@@ -60,17 +62,29 @@ class Handler(webapp2.RequestHandler):
 	def render(self, template, **kw): 
 		self.write(self.render_str(template, **kw))
 
-class MainPage(Handler): 
-	def render_front(self, title = '', art = '', error = ''): 
+def top_arts(update = False): 
+	key = 'top'
+	arts = memcache.get(key)
+	if arts is None or update: 
+		logging.error('db query')
 		arts = db.GqlQuery('SELECT * FROM Art ORDER BY created DESC LIMIT 10')
 		arts = list(arts)
-		self.render('front.html', title = title, art = art, error = error, arts = arts)
-		points = filter(None, (a.coords for a in arts))
-		if points: 
+		memcache.set(key, arts)
+	return arts		
 
+class MainPage(Handler): 
+	def render_front(self, title = '', art = '', error = ''): 
+		arts = top_arts()
+
+		points = filter(None, (a.coords for a in arts))
+		img_url = None
+		if points: 
+			img_url = gmaps_img(points)
+
+		self.render('front.html', title = title, art = art, error = error, arts = arts)
 
 	def get(self):
-		# self.write(repr(get_coords(self.request.remote_addr)))
+		self.write(repr(get_coords(self.request.remote_addr)))
 		self.render_front()
 
 	def post(self): 
@@ -84,6 +98,7 @@ class MainPage(Handler):
 			if coords: 
 				a.coords = coords 
 			a.put()
+			top_arts(True)
 			self.redirect('/')
 		else: 
 			error = 'we need both a title and some artwork!'
